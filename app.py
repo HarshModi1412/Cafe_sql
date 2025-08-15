@@ -24,7 +24,7 @@ import KPI_analyst
 import chatbot2
 
 # =========================================================
-# DATABASE CONFIG (Environment variables or defaults)
+# DATABASE CONFIG
 # =========================================================
 SERVER   = os.getenv("DB_SERVER",   "den1.mssql7.gear.host")
 DATABASE = os.getenv("DB_NAME",     "billinghistory")
@@ -33,7 +33,7 @@ PASSWORD = os.getenv("DB_PASSWORD", "Pk0Z-57_avQe")
 ROW_LIMIT = int(os.getenv("ROW_LIMIT", "500000"))
 
 # =========================================================
-# DB CONNECTION (TrustServerCertificate enabled)
+# DB CONNECTION
 # =========================================================
 def get_connection(max_retries: int = 2, sleep_between: int = 2):
     conn_str = (
@@ -47,7 +47,6 @@ def get_connection(max_retries: int = 2, sleep_between: int = 2):
         f"MultipleActiveResultSets=yes;"
         f"Login Timeout=15;"
     )
-
     last_err = None
     for attempt in range(1, max_retries + 2):
         try:
@@ -58,9 +57,6 @@ def get_connection(max_retries: int = 2, sleep_between: int = 2):
             last_err = e
             if attempt <= max_retries:
                 time.sleep(sleep_between)
-            else:
-                break
-
     st.error(f"❌ Database connection failed after retries: {last_err}")
     return None
 
@@ -68,7 +64,6 @@ def get_connection(max_retries: int = 2, sleep_between: int = 2):
 # HELPER FUNCTIONS
 # =========================================================
 def table_exists(conn, table_name: str) -> bool:
-    """Check if a table exists in the connected database."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -81,7 +76,6 @@ def table_exists(conn, table_name: str) -> bool:
         return False
 
 def resolve_table_name(preferred: list[str]) -> str | None:
-    """Return the first matching table from preferred names."""
     conn = get_connection()
     if not conn:
         return None
@@ -95,7 +89,8 @@ def resolve_table_name(preferred: list[str]) -> str | None:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame | None:
-    """Read table safely and return DataFrame or None."""
+    if not table_name:
+        return None
     conn = get_connection()
     if not conn:
         return None
@@ -104,50 +99,42 @@ def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame |
             return None
         top_clause = f"TOP {limit} " if (isinstance(limit, int) and limit > 0) else ""
         sql = f"SELECT {top_clause}* FROM [{table_name}]"
-        df = pd.read_sql_query(sql, conn)
-        return df
+        return pd.read_sql_query(sql, conn)
     except Exception as e:
-        st.error(f"❌ Error reading table '{table_name}': {e}")
+        st.warning(f"⚠ Could not read table '{table_name}': {e}")
         return None
     finally:
         conn.close()
 
-def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
-    """Clean and enrich transactions table."""
+def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
+    """Ensure required columns exist, rename, and add Sub Category."""
     if txns is None or txns.empty:
-        return txns
+        return pd.DataFrame()
 
-    # Rename common columns
     rename_map = {
         "invoice_id": "Invoice ID",
         "timestamp": "Date",
         "quantity": "Quantity",
         "customer_id": "Customer ID",
         "product_id": "Product ID",
-        "Product Name": "product_name "
+        "Product Name": "product_name"
     }
     existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
-    txns = txns.rename(columns=existing_map)
+    if existing_map:
+        txns = txns.rename(columns=existing_map)
 
-    # Convert dates
     if "Date" in txns.columns:
         txns["Date"] = pd.to_datetime(txns["Date"], errors="coerce").dt.date
-
-    # Add Sub Category from products
-    if products is not None and not products.empty and "Product ID" in txns.columns:
-        prod_lookup = products.rename(columns=lambda x: x.strip().lower())
-        if "product_id" in prod_lookup.columns and "product_name" in prod_lookup.columns:
-            merged = txns.merge(
-                prod_lookup[["Product ID", "Product Name"]],
-                left_on="Product ID",
-                right_on="Product ID",
-                how="left"
-            )
-            txns["Sub Category"] = merged["Product ID"]
     else:
-        txns["Sub Category"] = None
+        st.info("ℹ Missing column: 'Date'")
 
-    # Add Discount default 0
+    if "Product ID" not in txns.columns:
+        st.info("ℹ Missing column: 'Product ID', cannot populate Sub Category with IDs.")
+        txns["Product ID"] = None
+
+    # Always add Sub Category = Product ID
+    txns["Sub Category"] = txns["Product ID"]
+
     if "Discount" not in txns.columns:
         txns["Discount"] = 0
 
@@ -168,15 +155,13 @@ st.markdown("""
     .block-container {padding-top: 1rem; padding-bottom: 0rem;}
     </style>
 """, unsafe_allow_html=True)
-
-# Branding
 st.markdown("""
 <h1 style='text-align: left; color: #FFFFFF; font-size: 3em; margin: 0;'>Cafe_X</h1>
 <hr style='margin: 0.5rem auto 1rem auto; border: 1px solid #ccc; width: 100%;' />
 """, unsafe_allow_html=True)
 
 # =========================================================
-# TABLE RESOLUTION & LOADING
+# LOAD DATA
 # =========================================================
 CANDIDATES = {
     "Transactions": ["transactions", "billing"],
@@ -184,17 +169,12 @@ CANDIDATES = {
     "Products":     ["products", "bom"],
     "Promotions":   ["promotions"],
 }
-
 resolved_names = {logical: resolve_table_name(candidates) for logical, candidates in CANDIDATES.items()}
-txns_df  = read_table(resolved_names["Transactions"])
+txns_df  = safe_transform_transactions(read_table(resolved_names["Transactions"]))
 cust_df  = read_table(resolved_names["Customers"])
 prod_df  = read_table(resolved_names["Products"])
 promo_df = read_table(resolved_names["Promotions"])
 
-# Transform transactions safely
-txns_df = safe_transform_transactions(txns_df, prod_df)
-
-# Store in session state
 st.session_state.update({
     'txns_df': txns_df,
     'cust_df': cust_df,
@@ -203,7 +183,7 @@ st.session_state.update({
 })
 
 # =========================================================
-# DASHBOARD TABS
+# TABS
 # =========================================================
 tabs = st.tabs([
     "📘 Instructions", 
@@ -245,7 +225,7 @@ with tabs[1]:
 # Tab 3
 with tabs[2]:
     st.subheader("📊 Sales Analytics Overview")
-    if txns_df is None or txns_df.empty:
+    if txns_df.empty:
         st.warning("📂 Transactions missing or empty.")
     elif not st.session_state.get("start_sales_analysis", False):
         if st.button("▶️ Start Sales Analytics"):
@@ -261,7 +241,7 @@ with tabs[2]:
 # Tab 4
 with tabs[3]:
     st.subheader("🔍 Sub-Category Drilldown Analysis")
-    if txns_df is None or txns_df.empty:
+    if txns_df.empty:
         st.warning("📂 Transactions missing or empty.")
     elif not st.session_state.get("start_subcat_analysis", False):
         if st.button("▶️ Start Sub-Category Analysis"):
@@ -273,7 +253,7 @@ with tabs[3]:
 # Tab 5
 with tabs[4]:
     st.subheader("🚦 RFM Segmentation Analysis")
-    if txns_df is None or txns_df.empty:
+    if txns_df.empty:
         st.warning("⚠ Transactions missing or empty.")
     elif not st.session_state.get("run_rfm", False):
         if st.button("▶️ Run RFM Analysis"):
@@ -305,7 +285,7 @@ with tabs[4]:
 # Tab 6
 with tabs[5]:
     st.subheader("🧠 Business Analyst AI + KPI Analyst")
-    if txns_df is None or txns_df.empty:
+    if txns_df.empty:
         st.warning("📂 Transactions missing or empty.")
     else:
         BA.run_business_analyst_tab({
@@ -324,7 +304,7 @@ with tabs[5]:
 
 # Tab 7
 with tabs[6]:
-    if txns_df is None or txns_df.empty:
+    if txns_df.empty:
         st.warning("📂 Transactions missing or empty.")
     else:
         chatbot2.run_chat({
@@ -333,6 +313,3 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
-
-
-
