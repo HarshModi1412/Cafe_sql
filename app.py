@@ -157,9 +157,9 @@ def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> p
     if txns is None or txns.empty:
         return txns
     rename_map = {
-        "Invoice_id": "Invoice ID",
+        "invoice_id": "Invoice ID",
         "timestamp": "Date",
-        "Quanty": "Quantity",
+        "quantity": "Quantity",
         "customer_id": "Customer ID",
         "product_id": "Product ID"
     }
@@ -325,3 +325,4 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
