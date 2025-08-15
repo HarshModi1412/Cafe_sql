@@ -124,7 +124,7 @@ def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> p
         "quantity": "Quantity",
         "customer_id": "Customer ID",
         "product_id": "Product ID",
-        "Product Name": "product_name"
+        "Product Name": "product_name "
     }
     existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
     txns = txns.rename(columns=existing_map)
@@ -138,9 +138,9 @@ def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> p
         prod_lookup = products.rename(columns=lambda x: x.strip().lower())
         if "product_id" in prod_lookup.columns and "product_name" in prod_lookup.columns:
             merged = txns.merge(
-                prod_lookup[["product_id", "product_name"]],
+                prod_lookup[["Product ID", "Product Name"]],
                 left_on="Product ID",
-                right_on="product_id",
+                right_on="Product ID",
                 how="left"
             )
             txns["Sub Category"] = merged["Product ID"]
@@ -333,5 +333,6 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
