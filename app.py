@@ -131,8 +131,8 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
     if "Product ID" not in txns.columns:
         txns["Product ID"] = None
 
-    # Always add Sub Category = NA
-    txns["Sub Category"] = pd.NA
+    if "Sub Category" not in txns.columns:
+        txns["Sub Category"] = "NA"
 
     if "Discount" not in txns.columns:
         txns["Discount"] = 0
@@ -312,3 +312,4 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
