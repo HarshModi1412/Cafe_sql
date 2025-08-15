@@ -167,7 +167,7 @@ st.markdown("""
 CANDIDATES = {
     "Transactions": ["transactions", "billing"],
     "Customers":    ["customers"],
-    "Products":     ["products", "bom"],
+    "Products":     ["product"],
     "Promotions":   ["promotions"],
 }
 resolved_names = {logical: resolve_table_name(candidates) for logical, candidates in CANDIDATES.items()}
@@ -314,5 +314,6 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
