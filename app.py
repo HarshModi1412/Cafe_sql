@@ -54,7 +54,7 @@ def get_connection(max_retries: int = 2, sleep_between: int = 2):
         f"UID={USERNAME};"
         f"PWD={PASSWORD};"
         f"Encrypt=yes;"
-        f"TrustServerCertificate=no;"
+        f"TrustServerCertificate=yes;"
         f"MultipleActiveResultSets=yes;"
         f"Login Timeout=15;"
     )
@@ -316,3 +316,4 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
