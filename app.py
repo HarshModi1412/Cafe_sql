@@ -138,7 +138,7 @@ st.markdown("""
 CANDIDATES = {
     "Transactions": ["transactions", "billing"],
     "Customers":    ["customers"],
-    "Products":     ["products"],
+    "Products":     ["products", "bom"],
     "Promotions":   ["promotions"],
 }
 
@@ -326,5 +326,6 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
