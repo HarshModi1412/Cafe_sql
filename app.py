@@ -107,7 +107,7 @@ def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame |
         conn.close()
 
 def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
-    """Ensure required columns exist, rename, and add Sub Category."""
+    """Ensure required columns exist, rename, and always add Sub Category with NA."""
     if txns is None or txns.empty:
         return pd.DataFrame()
 
@@ -129,11 +129,10 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
         st.info("ℹ Missing column: 'Date'")
 
     if "Product ID" not in txns.columns:
-        st.info("ℹ Missing column: 'Product ID', cannot populate Sub Category with IDs.")
         txns["Product ID"] = None
 
-    # Always add Sub Category = Product ID
-    txns["Sub Category"] = txns["Product ID"]
+    # Always add Sub Category = NA
+    txns["Sub Category"] = pd.NA
 
     if "Discount" not in txns.columns:
         txns["Discount"] = 0
