@@ -141,6 +141,15 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
 
     return txns
 
+# Rename columns in prod_df
+if prod_df is not None and not prod_df.empty:
+    prod_df = prod_df.rename(columns={
+        "product_id": "Product ID",
+        "product_name": "Product Name",
+        "production_cost": "Production Cost",
+        "sub_category": "Sub Category"
+    })
+
 # =========================================================
 # STREAMLIT SETTINGS
 # =========================================================
@@ -314,6 +323,7 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
 
