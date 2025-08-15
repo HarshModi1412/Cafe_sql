@@ -118,7 +118,6 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
         "customer_id": "Customer ID",
         "product_id": "Product ID",
         "Product Name": "product_name",
-        "Product Name": "product_name",
         "unit_price": "Unit Price"
     }
     existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
@@ -140,15 +139,6 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
         txns["Discount"] = 0
 
     return txns
-
-# Rename columns in prod_df
-if prod_df is not None and not prod_df.empty:
-    prod_df = prod_df.rename(columns={
-        "product_id": "Product ID",
-        "product_name": "Product Name",
-        "production_cost": "Production Cost",
-        "sub_category": "Sub Category"
-    })
 
 # =========================================================
 # STREAMLIT SETTINGS
@@ -180,10 +170,20 @@ CANDIDATES = {
     "Promotions":   ["promotions"],
 }
 resolved_names = {logical: resolve_table_name(candidates) for logical, candidates in CANDIDATES.items()}
+
 txns_df  = safe_transform_transactions(read_table(resolved_names["Transactions"]))
 cust_df  = read_table(resolved_names["Customers"])
 prod_df  = read_table(resolved_names["Products"])
 promo_df = read_table(resolved_names["Promotions"])
+
+# Rename columns in prod_df
+if prod_df is not None and not prod_df.empty:
+    prod_df = prod_df.rename(columns={
+        "product_id": "Product ID",
+        "product_name": "Product Name",
+        "production_cost": "Production Cost",
+        "sub_category": "Sub Category"
+    })
 
 st.session_state.update({
     'txns_df': txns_df,
@@ -323,7 +323,3 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
-
-
-
-
