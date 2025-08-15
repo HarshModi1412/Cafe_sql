@@ -161,7 +161,8 @@ def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> p
         "timestamp": "Date",
         "quantity": "Quantity",
         "customer_id": "Customer ID",
-        "product_id": "Product ID"
+        "product_id": "Product ID",
+        "Sub Category": "product_name"
     }
     existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
     txns = txns.rename(columns=existing_map)
@@ -325,4 +326,5 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
