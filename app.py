@@ -142,7 +142,7 @@ def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> p
                 right_on="product_id",
                 how="left"
             )
-            txns["Sub Category"] = merged["product_name"]
+            txns["Sub Category"] = merged["Product ID"]
     else:
         txns["Sub Category"] = None
 
@@ -332,3 +332,4 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
