@@ -16,11 +16,13 @@ import KPI_analyst
 import chatbot2
 
 
-# === Database Connection (SQL Server) ===
+# =========================================================
+# SQL SERVER CONNECTION
+# =========================================================
 def get_connection():
     """Create and return a SQL Server connection using pyodbc."""
     try:
-        return pyodbc.connect(
+        conn = pyodbc.connect(
             "DRIVER={ODBC Driver 17 for SQL Server};"
             "SERVER=localhost;"
             "DATABASE=billing_history;"
@@ -28,17 +30,19 @@ def get_connection():
             "PWD=YourStrongPassword;"
             "TrustServerCertificate=yes"
         )
+        return conn
     except Exception as e:
         st.error(f"❌ Database connection failed: {e}")
         return None
 
 
-# === Safe Table Loader ===
+# =========================================================
+# SAFE TABLE FETCH FUNCTION
+# =========================================================
 def safe_select_all(table_name):
     """
-    SELECT * FROM <table_name>.
-    Skips if table doesn't exist.
-    Works for any table in the database.
+    Fetch all rows from a table if it exists, otherwise skip.
+    Works for any table in the current database.
     """
     conn = get_connection()
     if not conn:
@@ -47,7 +51,7 @@ def safe_select_all(table_name):
     try:
         cursor = conn.cursor()
 
-        # Check table existence
+        # Check if the table exists
         cursor.execute("""
             SELECT COUNT(*) 
             FROM INFORMATION_SCHEMA.TABLES 
@@ -59,26 +63,31 @@ def safe_select_all(table_name):
             st.warning(f"⚠ Table '{table_name}' does not exist. Skipping...")
             return None
 
-        # Fetch data
+        # Fetch table data
         cursor.execute(f"SELECT * FROM [{table_name}]")
-        columns = [desc[0] for desc in cursor.description]
+        columns = [col[0] for col in cursor.description]
         rows = cursor.fetchall()
+
         return pd.DataFrame(rows, columns=columns)
 
     except Exception as e:
-        st.error(f"❌ Error loading table '{table_name}': {e}")
+        st.error(f"❌ Error reading table '{table_name}': {e}")
         return None
     finally:
         conn.close()
 
 
-# === UI Cleanup ===
+# =========================================================
+# STREAMLIT PAGE SETTINGS
+# =========================================================
 st.set_page_config(
     page_title="Cafe_X Dashboard",
     page_icon="📊",
     layout="wide",
     menu_items={"Get Help": None, "Report a bug": None, "About": None}
 )
+
+# Hide Streamlit's default menu/footer
 st.markdown("""
     <style>
     #MainMenu, footer, header, a[href*="github.com"], .css-1lsmgbg.e1fqkh3o5 {display: none;}
@@ -87,14 +96,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# === Branding ===
+# =========================================================
+# BRANDING
+# =========================================================
 st.markdown("""
 <h1 style='text-align: left; color: #FFFFFF; font-size: 3em; margin: 0;'>Cafe_X</h1>
 <hr style='margin: 0.5rem auto 1rem auto; border: 1px solid #ccc; width: 100%;' />
 """, unsafe_allow_html=True)
 
 
-# === Sidebar Upload ===
+# =========================================================
+# SIDEBAR FILE UPLOAD
+# =========================================================
 st.sidebar.title("📁 Upload Your CSV/Excel Files")
 uploaded_files = st.sidebar.file_uploader(
     "Upload 1–4 CSV or Excel files",
@@ -102,14 +115,15 @@ uploaded_files = st.sidebar.file_uploader(
     accept_multiple_files=True
 )
 
-
-# === Session State Init ===
+# Session state defaults
 for key in ['uploaded_files', 'files_mapped', 'txns_df', 'cust_df', 'prod_df', 'promo_df']:
     if key not in st.session_state:
         st.session_state[key] = None if key.endswith('_df') else False
 
 
-# === Store Uploaded Files ===
+# =========================================================
+# LOAD UPLOADED FILES INTO MEMORY
+# =========================================================
 raw_dfs = {}
 if uploaded_files:
     st.session_state["uploaded_files"] = uploaded_files
@@ -120,7 +134,9 @@ if uploaded_files:
         raw_dfs[f'df_{idx+1}_name'] = file.name
 
 
-# === Upload Feedback ===
+# =========================================================
+# UPLOAD STATUS MESSAGES
+# =========================================================
 if not uploaded_files and not st.session_state["files_mapped"]:
     st.info("👈 Please upload your CSV/Excel files from the sidebar.")
 elif uploaded_files and not st.session_state["files_mapped"]:
@@ -129,14 +145,16 @@ elif st.session_state["files_mapped"]:
     st.success("✅ Files loaded and mapped. You're ready to explore insights!")
 
 
-# === Load Mapped Data ===
+# Load mapped data
 txns_df = st.session_state.get("txns_df")
 cust_df = st.session_state.get("cust_df")
 prod_df = st.session_state.get("prod_df")
 promo_df = st.session_state.get("promo_df")
 
 
-# === Tabs ===
+# =========================================================
+# TABS
+# =========================================================
 tabs = st.tabs([
     "📘 Instructions", 
     "🗂️ File Mapping",
@@ -147,8 +165,7 @@ tabs = st.tabs([
     "🤖 Chatbot"
 ])
 
-
-# === Tab 1: Instructions ===
+# Tab 1: Instructions
 with tabs[0]:
     st.subheader("📘 Instructions & User Guide")
     st.markdown("""
@@ -157,11 +174,9 @@ with tabs[0]:
     3. Explore analytics in the other tabs.
     """)
 
-
-# === Tab 2: File Mapping ===
+# Tab 2: File Mapping
 with tabs[1]:
     st.subheader("🗂️ File Mapping & Confirmation")
-
     if uploaded_files:
         if not st.session_state.get("files_mapped"):
             mapped_data = classify_and_extract_data(uploaded_files)
@@ -184,8 +199,7 @@ with tabs[1]:
     else:
         st.info("👈 Upload files to start mapping.")
 
-
-# === Tab 3: Sales Analytics ===
+# Tab 3: Sales Analytics
 with tabs[2]:
     st.subheader("📊 Sales Analytics Overview")
     if txns_df is None:
@@ -202,8 +216,7 @@ with tabs[2]:
             insights = generate_sales_insights(txns_df)
             generate_dynamic_insights(insights)
 
-
-# === Tab 4: Sub-Category Drilldown ===
+# Tab 4: Sub-Category Drilldown
 with tabs[3]:
     st.subheader("🔍 Sub-Category Drilldown Analysis")
     if txns_df is None:
@@ -216,8 +229,7 @@ with tabs[3]:
         else:
             render_subcategory_trends(txns_df)
 
-
-# === Tab 5: RFM Segmentation ===
+# Tab 5: RFM Segmentation
 with tabs[4]:
     st.subheader("🚦 RFM Segmentation Analysis")
     if txns_df is None:
@@ -227,7 +239,6 @@ with tabs[4]:
             if st.button("▶️ Run RFM Analysis"):
                 st.session_state.run_rfm = True
                 st.rerun()
-
         if st.session_state.get("run_rfm", False):
             with st.spinner("Running RFM segmentation..."):
                 rfm_df = calculate_rfm(txns_df)
@@ -252,8 +263,7 @@ with tabs[4]:
                     st.success("📨 Message Generated:")
                     st.markdown(message)
 
-
-# === Tab 6: Business Analyst + KPI Analyst ===
+# Tab 6: Business Analyst + KPI Analyst
 with tabs[5]:
     st.subheader("🧠 Business Analyst AI + KPI Analyst")
     if not raw_dfs:
@@ -263,16 +273,14 @@ with tabs[5]:
         st.markdown("---")
         KPI_analyst.run_kpi_analyst(raw_dfs)
 
-
-# === Tab 7: Chatbot AI ===
+# Tab 7: Chatbot
 with tabs[6]:
     if not raw_dfs:
         st.warning("📂 Please upload at least one raw file.")
     else:
         chatbot2.run_chat(raw_dfs)
 
-
-# === Sidebar Reset ===
+# Sidebar Reset Button
 if st.sidebar.button("🔄 Reset App"):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
