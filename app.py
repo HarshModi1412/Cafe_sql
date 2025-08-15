@@ -161,6 +161,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
+# REFRESH BUTTON
+# =========================================================
+if st.button("🔄 Refresh Data"):
+    st.cache_data.clear()
+    st.success("✅ Data cache cleared! Reloading...")
+    st.rerun()
+
+# =========================================================
 # LOAD DATA
 # =========================================================
 CANDIDATES = {
@@ -210,8 +218,9 @@ with tabs[0]:
     st.subheader("📘 Instructions & User Guide")
     st.markdown("""
     1. Data loads automatically if tables exist.
-    2. Check the **🗂️ Database Tables** tab for raw previews.
-    3. Run analytics from other tabs.
+    2. Click **🔄 Refresh Data** to instantly reload from the database.
+    3. Check the **🗂️ Database Tables** tab for raw previews.
+    4. Run analytics from other tabs.
     """)
     st.caption(f"Server: `{SERVER}`  •  DB: `{DATABASE}`")
     st.caption(f"Resolved 'Transactions' table: `{resolved_names['Transactions'] or 'NOT FOUND'}`")
