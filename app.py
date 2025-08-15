@@ -1,5 +1,7 @@
-import streamlit as st
+import os
+import time
 import pandas as pd
+import streamlit as st
 import pyodbc
 
 # === Module Imports ===
@@ -22,58 +24,107 @@ import KPI_analyst
 import chatbot2
 
 # =========================================================
-# DATABASE CONNECTION
+# REMOTE SQL SERVER CONFIG (GearHost)
+#   Tip: set these as environment variables in production.
 # =========================================================
-def get_connection():
-    """Create and return a SQL Server connection using pyodbc."""
-    try:
-        conn = pyodbc.connect(
-            "DRIVER={ODBC Driver 17 for SQL Server};"
-            "SERVER=localhost;"
-            "DATABASE=billing_history;"
-            "UID=sa;"
-            "PWD=YourStrongPassword;"
-            "TrustServerCertificate=yes",
-            timeout=30
-        )
-        return conn
-    except Exception as e:
-        st.error(f"❌ Database connection failed: {e}")
-        return None
+SERVER   = os.getenv("DB_SERVER",   "den1.mssql7.gear.host")
+DATABASE = os.getenv("DB_NAME",     "billinghistory")
+USERNAME = os.getenv("DB_USER",     "billinghistory")
+PASSWORD = os.getenv("DB_PASSWORD", "Pk0Z-57_avQe")   # prefer env var in prod
+
+# Optional: limit rows to prevent huge transfers on first load
+ROW_LIMIT = int(os.getenv("ROW_LIMIT", "500000"))  # adjust or set to 0 for no limit
 
 # =========================================================
-# SAFE TABLE FETCH FUNCTION
+# DB CONNECTION (with encryption, login timeout, retries)
 # =========================================================
-def safe_select_all(table_name):
+def get_connection(max_retries: int = 2, sleep_between: int = 2):
     """
-    Fetch all rows from a table if it exists.
-    Returns None if table is missing or query fails.
+    Create and return a SQL Server connection using pyodbc with sane defaults:
+    - Encrypt=yes (remote hosts often require TLS)
+    - TrustServerCertificate=no (safer; change to yes if your host requires it)
+    - Login Timeout (faster fail when unreachable)
+    - Query timeout applied on the connection
+    - Light retry logic for transient network hiccups
+    """
+    conn_str = (
+        f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+        f"SERVER={SERVER};"
+        f"DATABASE={DATABASE};"
+        f"UID={USERNAME};"
+        f"PWD={PASSWORD};"
+        f"Encrypt=yes;"
+        f"TrustServerCertificate=no;"
+        f"MultipleActiveResultSets=yes;"
+        f"Login Timeout=15;"
+    )
+
+    last_err = None
+    for attempt in range(1, max_retries + 2):  # e.g., 1 try + 2 retries
+        try:
+            conn = pyodbc.connect(conn_str, timeout=30)  # connection-establish timeout
+            # Apply statement/query timeout to the connection (seconds)
+            # (pyodbc docs: connection and cursor both have .timeout)
+            conn.timeout = 60
+            return conn
+        except Exception as e:
+            last_err = e
+            if attempt <= max_retries:
+                time.sleep(sleep_between)
+            else:
+                break
+
+    st.error(f"❌ Database connection failed after retries: {last_err}")
+    return None
+
+# =========================================================
+# HELPERS: table existence + resolution + safe select
+# =========================================================
+def table_exists(conn, table_name: str) -> bool:
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) 
+                FROM INFORMATION_SCHEMA.TABLES 
+                WHERE TABLE_NAME = ?
+            """, (table_name,))
+            return cur.fetchone()[0] > 0
+    except Exception:
+        return False
+
+def resolve_table_name(preferred: list[str]) -> str | None:
+    """
+    Try possible table names in order and return the first that exists.
+    """
+    conn = get_connection()
+    if not conn:
+        return None
+    try:
+        for t in preferred:
+            if table_exists(conn, t):
+                return t
+        return None
+    finally:
+        conn.close()
+
+@st.cache_data(ttl=600, show_spinner=False)
+def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame | None:
+    """
+    Cached table reader. Adds TOP limit if provided.
+    Returns None if table missing or query fails.
     """
     conn = get_connection()
     if not conn:
         return None
 
     try:
-        cursor = conn.cursor()
-
-        # Check existence
-        cursor.execute("""
-            SELECT COUNT(*)
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_NAME = ?
-        """, (table_name,))
-        exists = cursor.fetchone()[0] > 0
-
-        if not exists:
-            st.warning(f"⚠ Table '{table_name}' does not exist. Skipping...")
+        if not table_exists(conn, table_name):
             return None
 
-        # Fetch all data
-        cursor.execute(f"SELECT * FROM [{table_name}]")
-        columns = [col[0] for col in cursor.description]
-        rows = cursor.fetchall()
-        return pd.DataFrame(rows, columns=columns)
-
+        top_clause = f"TOP {limit} " if (isinstance(limit, int) and limit > 0) else ""
+        sql = f"SELECT {top_clause}* FROM [{table_name}]"
+        df = pd.read_sql_query(sql, conn)
+        return df
     except Exception as e:
         st.error(f"❌ Error reading table '{table_name}': {e}")
         return None
@@ -103,23 +154,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# LOAD DATA FROM DATABASE
+# TABLE NAME MAPPINGS (with fallback for Transactions → billing)
 # =========================================================
-table_names = {
-    "Transactions": "transactions",
-    "Customers": "customers",
-    "Products": "products",
-    "Promotions": "promotions"
+# Try "transactions" first, then "billing" (you mentioned your table is named 'billing')
+CANDIDATES = {
+    "Transactions": ["transactions", "billing"],
+    "Customers":    ["customers"],
+    "Products":     ["products"],
+    "Promotions":   ["promotions"],
 }
 
-st.session_state['txns_df'] = safe_select_all(table_names["Transactions"])
-st.session_state['cust_df'] = safe_select_all(table_names["Customers"])
-st.session_state['prod_df'] = safe_select_all(table_names["Products"])
-st.session_state['promo_df'] = safe_select_all(table_names["Promotions"])
+resolved_names = {}
+for logical, candidates in CANDIDATES.items():
+    tname = resolve_table_name(candidates)
+    resolved_names[logical] = tname
 
-txns_df = st.session_state['txns_df']
-cust_df = st.session_state['cust_df']
-prod_df = st.session_state['prod_df']
+# Load data (cached)
+st.session_state['txns_df'] = read_table(resolved_names["Transactions"])
+st.session_state['cust_df'] = read_table(resolved_names["Customers"])
+st.session_state['prod_df'] = read_table(resolved_names["Products"])
+st.session_state['promo_df'] = read_table(resolved_names["Promotions"])
+
+txns_df  = st.session_state['txns_df']
+cust_df  = st.session_state['cust_df']
+prod_df  = st.session_state['prod_df']
 promo_df = st.session_state['promo_df']
 
 # =========================================================
@@ -139,28 +197,38 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader("📘 Instructions & User Guide")
     st.markdown("""
-    1. Data is loaded automatically from SQL Server.
+    1. Data is loaded automatically from the **remote** SQL Server.
     2. Review loaded tables in the **🗂️ Database Tables** tab.
     3. Explore analytics in the other tabs.
     """)
+    # Connection health
+    col1, col2 = st.columns(2)
+    with col1:
+        st.caption(f"Server: `{SERVER}`  •  DB: `{DATABASE}`")
+    with col2:
+        st.caption(f"Resolved 'Transactions' table: `{resolved_names['Transactions'] or 'NOT FOUND'}`")
 
 # Tab 2: Database Tables
 with tabs[1]:
     st.subheader("🗂️ Database Tables Preview")
     for name, df in {
-        "Transactions": txns_df,
-        "Customers": cust_df,
-        "Products": prod_df,
-        "Promotions": promo_df
+        f"Transactions ({resolved_names['Transactions']})": txns_df,
+        f"Customers ({resolved_names['Customers']})":      cust_df,
+        f"Products ({resolved_names['Products']})":        prod_df,
+        f"Promotions ({resolved_names['Promotions']})":    promo_df
     }.items():
-        with st.expander(f"📄 {name} Table Sample"):
-            st.dataframe(df.head(10) if df is not None else f"⚠ No {name} data.", use_container_width=True)
+        with st.expander(f"📄 {name}"):
+            if df is not None and not df.empty:
+                st.dataframe(df.head(10), use_container_width=True)
+                st.caption(f"Rows loaded: {len(df):,}" + (f" (limited to TOP {ROW_LIMIT:,})" if ROW_LIMIT else ""))
+            else:
+                st.warning(f"⚠ No data for {name} (table missing or empty).")
 
 # Tab 3: Sales Analytics
 with tabs[2]:
     st.subheader("📊 Sales Analytics Overview")
-    if txns_df is None:
-        st.warning("📂 Transactions table not found.")
+    if txns_df is None or txns_df.empty:
+        st.warning("📂 Transactions table not found or empty.")
     elif not st.session_state.get("start_sales_analysis", False):
         if st.button("▶️ Start Sales Analytics"):
             st.session_state.start_sales_analysis = True
@@ -175,8 +243,8 @@ with tabs[2]:
 # Tab 4: Sub-Category Drilldown
 with tabs[3]:
     st.subheader("🔍 Sub-Category Drilldown Analysis")
-    if txns_df is None:
-        st.warning("📂 Transactions table not found.")
+    if txns_df is None or txns_df.empty:
+        st.warning("📂 Transactions table not found or empty.")
     elif not st.session_state.get("start_subcat_analysis", False):
         if st.button("▶️ Start Sub-Category Analysis"):
             st.session_state.start_subcat_analysis = True
@@ -187,8 +255,8 @@ with tabs[3]:
 # Tab 5: RFM Segmentation
 with tabs[4]:
     st.subheader("🚦 RFM Segmentation Analysis")
-    if txns_df is None:
-        st.warning("⚠ Transactions table not found.")
+    if txns_df is None or txns_df.empty:
+        st.warning("⚠ Transactions table not found or empty.")
     elif not st.session_state.get("run_rfm", False):
         if st.button("▶️ Run RFM Analysis"):
             st.session_state.run_rfm = True
@@ -220,8 +288,8 @@ with tabs[4]:
 # Tab 6: Business Analyst + KPI Analyst
 with tabs[5]:
     st.subheader("🧠 Business Analyst AI + KPI Analyst")
-    if txns_df is None:
-        st.warning("📂 Transactions table not found.")
+    if txns_df is None or txns_df.empty:
+        st.warning("📂 Transactions table not found or empty.")
     else:
         BA.run_business_analyst_tab({
             "transactions": txns_df,
@@ -239,8 +307,8 @@ with tabs[5]:
 
 # Tab 7: Chatbot
 with tabs[6]:
-    if txns_df is None:
-        st.warning("📂 Transactions table not found.")
+    if txns_df is None or txns_df.empty:
+        st.warning("📂 Transactions table not found or empty.")
     else:
         chatbot2.run_chat({
             "transactions": txns_df,
