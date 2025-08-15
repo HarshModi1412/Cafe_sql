@@ -24,13 +24,12 @@ import KPI_analyst
 import chatbot2
 
 # =========================================================
-# REMOTE SQL SERVER CONFIG
+# DATABASE CONFIG (Environment variables or defaults)
 # =========================================================
 SERVER   = os.getenv("DB_SERVER",   "den1.mssql7.gear.host")
 DATABASE = os.getenv("DB_NAME",     "billinghistory")
 USERNAME = os.getenv("DB_USER",     "billinghistory")
 PASSWORD = os.getenv("DB_PASSWORD", "Pk0Z-57_avQe")
-
 ROW_LIMIT = int(os.getenv("ROW_LIMIT", "500000"))
 
 # =========================================================
@@ -66,9 +65,10 @@ def get_connection(max_retries: int = 2, sleep_between: int = 2):
     return None
 
 # =========================================================
-# HELPERS
+# HELPER FUNCTIONS
 # =========================================================
 def table_exists(conn, table_name: str) -> bool:
+    """Check if a table exists in the connected database."""
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -81,6 +81,7 @@ def table_exists(conn, table_name: str) -> bool:
         return False
 
 def resolve_table_name(preferred: list[str]) -> str | None:
+    """Return the first matching table from preferred names."""
     conn = get_connection()
     if not conn:
         return None
@@ -94,6 +95,7 @@ def resolve_table_name(preferred: list[str]) -> str | None:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame | None:
+    """Read table safely and return DataFrame or None."""
     conn = get_connection()
     if not conn:
         return None
@@ -109,6 +111,46 @@ def read_table(table_name: str, limit: int | None = ROW_LIMIT) -> pd.DataFrame |
         return None
     finally:
         conn.close()
+
+def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
+    """Clean and enrich transactions table."""
+    if txns is None or txns.empty:
+        return txns
+
+    # Rename common columns
+    rename_map = {
+        "invoice_id": "Invoice ID",
+        "timestamp": "Date",
+        "quantity": "Quantity",
+        "customer_id": "Customer ID",
+        "product_id": "Product ID"
+    }
+    existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
+    txns = txns.rename(columns=existing_map)
+
+    # Convert dates
+    if "Date" in txns.columns:
+        txns["Date"] = pd.to_datetime(txns["Date"], errors="coerce").dt.date
+
+    # Add Sub Category from products
+    if products is not None and not products.empty and "Product ID" in txns.columns:
+        prod_lookup = products.rename(columns=lambda x: x.strip().lower())
+        if "product_id" in prod_lookup.columns and "product_name" in prod_lookup.columns:
+            merged = txns.merge(
+                prod_lookup[["product_id", "product_name"]],
+                left_on="Product ID",
+                right_on="product_id",
+                how="left"
+            )
+            txns["Sub Category"] = merged["product_name"]
+    else:
+        txns["Sub Category"] = None
+
+    # Add Discount default 0
+    if "Discount" not in txns.columns:
+        txns["Discount"] = 0
+
+    return txns
 
 # =========================================================
 # STREAMLIT SETTINGS
@@ -133,7 +175,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================================================
-# TABLE NAME MAPPINGS
+# TABLE RESOLUTION & LOADING
 # =========================================================
 CANDIDATES = {
     "Transactions": ["transactions", "billing"],
@@ -143,57 +185,24 @@ CANDIDATES = {
 }
 
 resolved_names = {logical: resolve_table_name(candidates) for logical, candidates in CANDIDATES.items()}
-
-# Load data
 txns_df  = read_table(resolved_names["Transactions"])
 cust_df  = read_table(resolved_names["Customers"])
 prod_df  = read_table(resolved_names["Products"])
 promo_df = read_table(resolved_names["Promotions"])
 
-# =========================================================
-# SAFE COLUMN HANDLING
-# =========================================================
-def safe_transform_transactions(txns: pd.DataFrame, products: pd.DataFrame) -> pd.DataFrame:
-    if txns is None or txns.empty:
-        return txns
-    rename_map = {
-        "invoice_id": "Invoice ID",
-        "timestamp": "Date",
-        "quantity": "Quantity",
-        "customer_id": "Customer ID",
-        "product_id": "Product ID",
-        "Sub Category": "product_name"
-    }
-    existing_map = {k: v for k, v in rename_map.items() if k in txns.columns}
-    txns = txns.rename(columns=existing_map)
-
-    if "Date" in txns.columns:
-        txns["Date"] = pd.to_datetime(txns["Date"], errors="coerce").dt.date
-
-    if products is not None and not products.empty:
-        if "Product ID" in txns.columns:
-            prod_lookup = products.rename(columns=lambda x: x.strip().lower())
-            if "product_id" in prod_lookup.columns and "product_name" in prod_lookup.columns:
-                merged = txns.merge(
-                    prod_lookup[["product_id", "product_name"]],
-                    left_on="Product ID",
-                    right_on="product_id",
-                    how="left"
-                )
-                txns["Sub Category"] = merged["product_name"]
-
-    return txns
-
+# Transform transactions safely
 txns_df = safe_transform_transactions(txns_df, prod_df)
 
-# Store in session
-st.session_state['txns_df'] = txns_df
-st.session_state['cust_df'] = cust_df
-st.session_state['prod_df'] = prod_df
-st.session_state['promo_df'] = promo_df
+# Store in session state
+st.session_state.update({
+    'txns_df': txns_df,
+    'cust_df': cust_df,
+    'prod_df': prod_df,
+    'promo_df': promo_df
+})
 
 # =========================================================
-# TABS
+# DASHBOARD TABS
 # =========================================================
 tabs = st.tabs([
     "📘 Instructions", 
@@ -213,11 +222,8 @@ with tabs[0]:
     2. Check the **🗂️ Database Tables** tab for raw previews.
     3. Run analytics from other tabs.
     """)
-    col1, col2 = st.columns(2)
-    with col1:
-        st.caption(f"Server: `{SERVER}`  •  DB: `{DATABASE}`")
-    with col2:
-        st.caption(f"Resolved 'Transactions' table: `{resolved_names['Transactions'] or 'NOT FOUND'}`")
+    st.caption(f"Server: `{SERVER}`  •  DB: `{DATABASE}`")
+    st.caption(f"Resolved 'Transactions' table: `{resolved_names['Transactions'] or 'NOT FOUND'}`")
 
 # Tab 2
 with tabs[1]:
@@ -326,7 +332,3 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
-
-
-
-
