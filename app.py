@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-import mysql.connector
-from mysql.connector import Error
+import pyodbc
 
 # === Module Imports ===
 from modules.rfm import calculate_rfm, get_campaign_targets, generate_personal_offer
@@ -17,64 +16,86 @@ import KPI_analyst
 import chatbot2
 
 
-# === Safe Table Loader ===
-def safe_select_all(table_name, connection):
-    """
-    Runs SELECT * FROM <table_name>.
-    If table doesn't exist, returns None instead of crashing.
-    """
+# === Database Connection (SQL Server) ===
+def get_connection():
+    """Create and return a SQL Server connection using pyodbc."""
     try:
-        cursor = connection.cursor()
-        cursor.execute(f"SELECT * FROM {table_name}")
-        rows = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-        cursor.close()
-        return pd.DataFrame(rows, columns=columns)
-    except Error as e:
-        if "doesn't exist" in str(e).lower():
-            st.warning(f"⚠️ Table '{table_name}' does not exist. Skipping...")
+        return pyodbc.connect(
+            "DRIVER={ODBC Driver 17 for SQL Server};"
+            "SERVER=localhost;"
+            "DATABASE=billing_history;"
+            "UID=sa;"
+            "PWD=YourStrongPassword;"
+            "TrustServerCertificate=yes"
+        )
+    except Exception as e:
+        st.error(f"❌ Database connection failed: {e}")
+        return None
+
+
+# === Safe Table Loader ===
+def safe_select_all(table_name):
+    """
+    SELECT * FROM <table_name>.
+    Skips if table doesn't exist.
+    Works for any table in the database.
+    """
+    conn = get_connection()
+    if not conn:
+        return None
+
+    try:
+        cursor = conn.cursor()
+
+        # Check table existence
+        cursor.execute("""
+            SELECT COUNT(*) 
+            FROM INFORMATION_SCHEMA.TABLES 
+            WHERE TABLE_NAME = ?
+        """, (table_name,))
+        exists = cursor.fetchone()[0] > 0
+
+        if not exists:
+            st.warning(f"⚠ Table '{table_name}' does not exist. Skipping...")
             return None
-        else:
-            raise
+
+        # Fetch data
+        cursor.execute(f"SELECT * FROM [{table_name}]")
+        columns = [desc[0] for desc in cursor.description]
+        rows = cursor.fetchall()
+        return pd.DataFrame(rows, columns=columns)
+
+    except Exception as e:
+        st.error(f"❌ Error loading table '{table_name}': {e}")
+        return None
+    finally:
+        conn.close()
 
 
 # === UI Cleanup ===
-hide_ui = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    a[href*="github.com"] {visibility: hidden;}
-    .css-1lsmgbg.e1fqkh3o5 {display: none;}
-    </style>
-"""
-st.markdown(hide_ui, unsafe_allow_html=True)
-
-
-# === Page Config ===
 st.set_page_config(
     page_title="Cafe_X Dashboard",
     page_icon="📊",
     layout="wide",
     menu_items={"Get Help": None, "Report a bug": None, "About": None}
 )
+st.markdown("""
+    <style>
+    #MainMenu, footer, header, a[href*="github.com"], .css-1lsmgbg.e1fqkh3o5 {display: none;}
+    .block-container {padding-top: 1rem; padding-bottom: 0rem;}
+    </style>
+""", unsafe_allow_html=True)
 
 
 # === Branding ===
 st.markdown("""
-<style>
-    .block-container {
-        padding-top: 1rem;
-        padding-bottom: 0rem;
-    }
-</style>
 <h1 style='text-align: left; color: #FFFFFF; font-size: 3em; margin: 0;'>Cafe_X</h1>
 <hr style='margin: 0.5rem auto 1rem auto; border: 1px solid #ccc; width: 100%;' />
 """, unsafe_allow_html=True)
 
 
 # === Sidebar Upload ===
-st.sidebar.title("📁 Upload Your CSV Files")
+st.sidebar.title("📁 Upload Your CSV/Excel Files")
 uploaded_files = st.sidebar.file_uploader(
     "Upload 1–4 CSV or Excel files",
     type=["csv", "xlsx"],
@@ -101,9 +122,9 @@ if uploaded_files:
 
 # === Upload Feedback ===
 if not uploaded_files and not st.session_state["files_mapped"]:
-    st.info("👈 Please upload your CSV files from the sidebar to get started.")
+    st.info("👈 Please upload your CSV/Excel files from the sidebar.")
 elif uploaded_files and not st.session_state["files_mapped"]:
-    st.warning("📤 Files uploaded. Go to the **🗂️ File Mapping** tab to proceed.")
+    st.warning("📤 Files uploaded. Go to the **🗂️ File Mapping** tab.")
 elif st.session_state["files_mapped"]:
     st.success("✅ Files loaded and mapped. You're ready to explore insights!")
 
@@ -131,11 +152,9 @@ tabs = st.tabs([
 with tabs[0]:
     st.subheader("📘 Instructions & User Guide")
     st.markdown("""
-    Welcome to the **Retail Analytics Dashboard**. Steps:
-    1. 📁 Upload your data files from the **sidebar**
-    2. Map them in the **🗂️ File Mapping** tab
-    3. Navigate through tabs to run analysis
-    4. Download results wherever applicable
+    1. 📁 Upload data files from the sidebar.
+    2. Map them in the **🗂️ File Mapping** tab.
+    3. Explore analytics in the other tabs.
     """)
 
 
@@ -144,11 +163,8 @@ with tabs[1]:
     st.subheader("🗂️ File Mapping & Confirmation")
 
     if uploaded_files:
-        st.markdown("### 🧩 Column Mapping for Each File")
-
         if not st.session_state.get("files_mapped"):
             mapped_data = classify_and_extract_data(uploaded_files)
-
             if mapped_data:
                 st.session_state['txns_df'] = mapped_data.get("Transactions")
                 st.session_state['cust_df'] = mapped_data.get("Customers")
@@ -157,29 +173,25 @@ with tabs[1]:
                 st.session_state["files_mapped"] = True
                 st.rerun()
         else:
-            with st.expander("📄 Transactions Sample"):
-                st.dataframe(txns_df.head(10) if txns_df is not None else "⚠️ No Transactions data.")
-            with st.expander("📄 Customers Sample"):
-                st.dataframe(cust_df.head(10) if cust_df is not None else "⚠️ No Customers data.")
-            with st.expander("📄 Products Sample"):
-                st.dataframe(prod_df.head(10) if prod_df is not None else "⚠️ No Products data.")
-            with st.expander("📄 Promotions Sample"):
-                st.dataframe(promo_df.head(10) if promo_df is not None else "⚠️ No Promotions data.")
+            for name, df in {
+                "Transactions": txns_df,
+                "Customers": cust_df,
+                "Products": prod_df,
+                "Promotions": promo_df
+            }.items():
+                with st.expander(f"📄 {name} Sample"):
+                    st.dataframe(df.head(10) if df is not None else f"⚠ No {name} data.")
     else:
-        st.info("👈 Please upload your CSV files to start mapping.")
+        st.info("👈 Upload files to start mapping.")
 
 
 # === Tab 3: Sales Analytics ===
 with tabs[2]:
     st.subheader("📊 Sales Analytics Overview")
-    
     if txns_df is None:
-        st.warning("📂 Please upload the Transactions CSV file.")
+        st.warning("📂 Please upload the Transactions file.")
     else:
-        if "start_sales_analysis" not in st.session_state:
-            st.session_state.start_sales_analysis = False
-
-        if not st.session_state.start_sales_analysis:
+        if not st.session_state.get("start_sales_analysis", False):
             if st.button("▶️ Start Sales Analytics"):
                 st.session_state.start_sales_analysis = True
                 st.rerun()
@@ -194,37 +206,29 @@ with tabs[2]:
 # === Tab 4: Sub-Category Drilldown ===
 with tabs[3]:
     st.subheader("🔍 Sub-Category Drilldown Analysis")
-
     if txns_df is None:
-        st.warning("📂 Please upload your Transactions file.")
+        st.warning("📂 Please upload the Transactions file.")
     else:
-        if "start_subcat_analysis" not in st.session_state:
-            st.session_state.start_subcat_analysis = False
-
-        if st.session_state.start_subcat_analysis:
-            render_subcategory_trends(txns_df)
-        else:
-            st.info("Click to start sub-category analysis.")
+        if not st.session_state.get("start_subcat_analysis", False):
             if st.button("▶️ Start Sub-Category Analysis"):
                 st.session_state.start_subcat_analysis = True
                 st.rerun()
+        else:
+            render_subcategory_trends(txns_df)
 
 
 # === Tab 5: RFM Segmentation ===
 with tabs[4]:
     st.subheader("🚦 RFM Segmentation Analysis")
     if txns_df is None:
-        st.warning("⚠️ Please upload the Transactions CSV file.")
+        st.warning("⚠ Please upload the Transactions file.")
     else:
-        if "run_rfm" not in st.session_state:
-            st.session_state.run_rfm = False
-
-        if not st.session_state.run_rfm:
+        if not st.session_state.get("run_rfm", False):
             if st.button("▶️ Run RFM Analysis"):
                 st.session_state.run_rfm = True
                 st.rerun()
 
-        if st.session_state.run_rfm:
+        if st.session_state.get("run_rfm", False):
             with st.spinner("Running RFM segmentation..."):
                 rfm_df = calculate_rfm(txns_df)
                 st.session_state['rfm_df'] = rfm_df
@@ -242,14 +246,11 @@ with tabs[4]:
             if st.button("💬 Send Personalized Message"):
                 campaign_df = st.session_state.get('campaign_df')
                 if campaign_df is None or campaign_df.empty:
-                    st.warning("⚠️ No campaign targets found. Please run RFM first.")
+                    st.warning("⚠ No campaign targets found.")
                 else:
                     message = generate_personal_offer(txns_df, cust_df)
-                    if "No eligible customers" in message:
-                        st.warning(message)
-                    else:
-                        st.success("📨 Message Generated:")
-                        st.markdown(message)
+                    st.success("📨 Message Generated:")
+                    st.markdown(message)
 
 
 # === Tab 6: Business Analyst + KPI Analyst ===
