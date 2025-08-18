@@ -202,10 +202,10 @@ if promo_df is not None and not promo_df.empty:
     promo_rename_map = {}
     if 'created_at' in promo_df.columns:
         promo_rename_map['created_at'] = 'Start'
-    if 'offer_till' in cust_df.columns:
+    if 'offer_till' in promo_df.columns:
         promo_rename_map['offer_till'] = 'End'
-    if 'discount_percentage' in cust_df.columns:
-        promo_rename_map['discount_percentage'] = 'discount'
+    if 'discount_percent' in cust_df.columns:
+        promo_rename_map['discount_percent'] = 'discount'
 
     if promo_rename_map:
         promo_df = promo_df.rename(columns=promo_rename_map)
@@ -358,6 +358,7 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
 
