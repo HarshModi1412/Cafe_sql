@@ -230,116 +230,121 @@ def render_subcategory_trends(txns_df):
         st.warning("Please upload transaction data.")
         return
 
-    df = txns_df.copy()
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
-    df = df.dropna(subset=['Date'])
+    try:
+        df = txns_df.copy()
+        df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
+        df = df.dropna(subset=['Date'])
 
-    # Extract month and day of week
-    df['Month'] = df['Date'].dt.to_period('M').astype(str)
-    df['DayOfWeek'] = df['Date'].dt.day_name()
+        # Extract month and day of week
+        df['Month'] = df['Date'].dt.to_period('M').astype(str)
+        df['DayOfWeek'] = df['Date'].dt.day_name()
 
-    # Optional: Filter to sales only if Transaction Type column exists
-    if 'Transaction Type' in df.columns:
-        df['Transaction Type'] = df['Transaction Type'].astype(str).str.lower().str.strip()
-        if df['Transaction Type'].str.contains('sale').any():
-            df = df[df['Transaction Type'].str.contains('sale', na=False)]
+        # Optional: Filter to sales only if Transaction Type column exists
+        if 'Transaction Type' in df.columns:
+            df['Transaction Type'] = df['Transaction Type'].astype(str).str.lower().str.strip()
+            if df['Transaction Type'].str.contains('sale').any():
+                df = df[df['Transaction Type'].str.contains('sale', na=False)]
 
-    # Check for Sub Category
-    if 'Sub Category' not in df.columns or df['Sub Category'].dropna().empty:
-        st.warning("⚠️ No valid 'Sub Category' data found.")
-        return
+        # Check for Sub Category
+        if 'Sub Category' not in df.columns or df['Sub Category'].dropna().empty:
+            st.warning("⚠️ No valid 'Sub Category' data found.")
+            return
 
-    subcats = sorted(df['Sub Category'].dropna().unique())
-    selected_subcat = st.selectbox("Choose a Sub-Category", subcats)
-    sub_df = df[df['Sub Category'] == selected_subcat]
+        subcats = sorted(df['Sub Category'].dropna().unique())
+        selected_subcat = st.selectbox("Choose a Sub-Category", subcats)
+        sub_df = df[df['Sub Category'] == selected_subcat]
 
-    if sub_df.empty:
-        st.warning("No data found for this sub-category.")
-        return
+        if sub_df.empty:
+            st.warning("No data found for this sub-category.")
+            return
 
-    # Monthly trend
-    trend_df = sub_df.groupby('Month').agg({
-        'Invoice Total': 'sum',
-        'Production Cost': 'sum' if 'Production Cost' in sub_df.columns else 'size',
-        'Quantity': 'sum'
-    }).rename(columns={'Production Cost': 'Production Cost'}).reset_index()
+        # --- Monthly trend ---
+        agg_dict = {'Invoice Total': 'sum', 'Quantity': 'sum'}
+        if 'Production Cost' in sub_df.columns:
+            agg_dict['Production Cost'] = 'sum'
+        else:
+            sub_df['Production Cost'] = np.nan
+            agg_dict['Production Cost'] = 'sum'
 
-    if 'Production Cost' in trend_df.columns:
-        trend_df['Gross Profit'] = trend_df['Invoice Total'] - trend_df['Production Cost']
-        trend_df['Profit Margin (%)'] = (trend_df['Gross Profit'] / trend_df['Invoice Total']) * 100
-    else:
-        trend_df['Gross Profit'] = np.nan
-        trend_df['Profit Margin (%)'] = np.nan
+        trend_df = sub_df.groupby('Month').agg(agg_dict).reset_index()
 
-    st.plotly_chart(
-        go.Figure([
+        # Calculate gross profit and margin safely
+        trend_df['Gross Profit'] = trend_df['Invoice Total'] - trend_df['Production Cost'].fillna(0)
+        trend_df['Profit Margin (%)'] = np.where(
+            trend_df['Invoice Total'] > 0,
+            (trend_df['Gross Profit'] / trend_df['Invoice Total']) * 100,
+            np.nan
+        )
+
+        # Monthly Trend Chart
+        fig_trend = go.Figure([
             go.Scatter(x=trend_df['Month'], y=trend_df['Invoice Total'], mode='lines+markers', name='Sales'),
             go.Scatter(x=trend_df['Month'], y=trend_df['Gross Profit'], mode='lines+markers', name='Gross Profit'),
             go.Scatter(x=trend_df['Month'], y=trend_df['Quantity'], mode='lines+markers', name='Units Sold')
-        ]).update_layout(
+        ])
+        fig_trend.update_layout(
             title=f"📊 Monthly Trend - {selected_subcat}",
             xaxis_title="Month",
             yaxis_title="Value",
             legend=dict(orientation='h', y=1.1),
             margin=dict(t=40, b=40)
-        ),
-        use_container_width=True
-    )
+        )
+        st.plotly_chart(fig_trend, use_container_width=True)
 
-    # Day-of-week pattern
-    dow_df = sub_df.groupby('DayOfWeek').agg({'Invoice Total': 'sum', 'Quantity': 'sum'}).reindex([
-        'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
-    ]).reset_index()
+        # --- Day-of-week pattern ---
+        dow_df = sub_df.groupby('DayOfWeek').agg({'Invoice Total': 'sum', 'Quantity': 'sum'}).reindex([
+            'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'
+        ]).reset_index()
 
-    fig_dow = go.Figure([
-        go.Bar(x=dow_df['DayOfWeek'], y=dow_df['Invoice Total'], name='Sales'),
-        go.Scatter(x=dow_df['DayOfWeek'], y=dow_df['Quantity'], name='Units Sold', mode='lines+markers', yaxis='y2')
-    ])
-    fig_dow.update_layout(
-        title=f"📅 Day of Week Sales Pattern - {selected_subcat}",
-        xaxis_title="Day",
-        yaxis=dict(title="Sales (₹)", side='left'),
-        yaxis2=dict(title="Units Sold", overlaying='y', side='right'),
-        legend=dict(orientation='h', y=1.15)
-    )
-    st.plotly_chart(fig_dow, use_container_width=True)
+        fig_dow = go.Figure([
+            go.Bar(x=dow_df['DayOfWeek'], y=dow_df['Invoice Total'], name='Sales'),
+            go.Scatter(x=dow_df['DayOfWeek'], y=dow_df['Quantity'], name='Units Sold', mode='lines+markers', yaxis='y2')
+        ])
+        fig_dow.update_layout(
+            title=f"📅 Day of Week Sales Pattern - {selected_subcat}",
+            xaxis_title="Day",
+            yaxis=dict(title="Sales (₹)", side='left'),
+            yaxis2=dict(title="Units Sold", overlaying='y', side='right'),
+            legend=dict(orientation='h', y=1.15)
+        )
+        st.plotly_chart(fig_dow, use_container_width=True)
 
-    # Smart Insights
-    st.subheader("💡 Smart Insights")
-
-    try:
-        latest = trend_df.iloc[-1]
-        avg_profit = trend_df['Gross Profit'].mean()
-        growth_rate = trend_df['Invoice Total'].pct_change().iloc[-1] * 100 if len(trend_df) > 1 else 0
-        best_day = dow_df.loc[dow_df['Invoice Total'].idxmax(), 'DayOfWeek']
-        worst_day = dow_df.loc[dow_df['Invoice Total'].idxmin(), 'DayOfWeek']
-
+        # --- Smart Insights ---
+        st.subheader("💡 Smart Insights")
         insights = []
 
-        if growth_rate > 10:
-            insights.append(f"📈 Sales for **{selected_subcat}** grew by **{growth_rate:.1f}%** last month. Expand inventory or offer combos.")
-        elif growth_rate < -10:
-            insights.append(f"📉 Sales dropped by **{abs(growth_rate):.1f}%**. Investigate price, stockouts, or competitor activity.")
-        else:
-            insights.append(f"🔄 Sales for **{selected_subcat}** remained steady. Consider small nudges like banner placements or bundling.")
+        if not trend_df.empty and len(trend_df) > 1:
+            latest = trend_df.iloc[-1]
+            growth_rate = (trend_df['Invoice Total'].pct_change().iloc[-1] * 100) if len(trend_df) > 1 else 0
+            avg_profit = trend_df['Gross Profit'].mean()
+            best_day = dow_df.loc[dow_df['Invoice Total'].idxmax(), 'DayOfWeek']
+            worst_day = dow_df.loc[dow_df['Invoice Total'].idxmin(), 'DayOfWeek']
 
-        if not np.isnan(latest['Gross Profit']) and latest['Gross Profit'] < 0.8 * avg_profit:
-            insights.append(f"⚠️ Profit this month is **below average**. Review COGS or pricing strategy.")
+            if growth_rate > 10:
+                insights.append(f"📈 Sales for **{selected_subcat}** grew by **{growth_rate:.1f}%** last month.")
+            elif growth_rate < -10:
+                insights.append(f"📉 Sales dropped by **{abs(growth_rate):.1f}%**. Investigate pricing, stockouts, or competitors.")
+            else:
+                insights.append(f"🔄 Sales remained stable. Consider minor promotions or bundling.")
 
-        if not np.isnan(latest['Profit Margin (%)']):
+            if latest['Gross Profit'] < 0.8 * avg_profit:
+                insights.append(f"⚠️ Profit this month below average. Review COGS or pricing.")
+
             if latest['Profit Margin (%)'] < 20:
-                insights.append(f"💸 Low profit margin (**{latest['Profit Margin (%)']:.1f}%**). You may be **underpricing** or discounting too heavily.")
+                insights.append(f"💸 Low profit margin ({latest['Profit Margin (%)']:.1f}%).")
             elif latest['Profit Margin (%)'] > 50:
-                insights.append(f"🚀 High margin (**{latest['Profit Margin (%)']:.1f}%**). Consider **scaling** via promotions or placement.")
+                insights.append(f"🚀 High margin ({latest['Profit Margin (%)']:.1f}%). Consider scaling.")
 
-        insights.append(f"📊 **Best day** for sales: **{best_day}**. Try pushing promotions here.")
-        insights.append(f"😴 **Lowest sales** on: **{worst_day}**. Could test targeted nudges or restocking.")
+            insights.append(f"📊 **Best sales day:** {best_day}")
+            insights.append(f"😴 **Lowest sales day:** {worst_day}")
 
-        st.success("\n\n".join(insights))
+        if insights:
+            st.success("\n\n".join(insights))
+        else:
+            st.info("No actionable insights available for this sub-category.")
+
     except Exception as e:
-        st.warning(f"⚠️ Could not generate insights: {e}")
-
-        st.warning(f"⚠️ Could not generate insights: {e}")
+        st.error(f"⚠️ An error occurred while generating trends: {e}")
 
 def generate_dynamic_insights(insights):
     st.subheader("📘 Smart Storytelling Insights")
@@ -412,5 +417,6 @@ Consider optimizing the discount ladder to focus on sweet spots that convert.
             st.success(f"💰 High margin (**{margin:.1f}%**) — opportunity to scale up with more volume or promotions.")
 
     st.markdown("---")
+
 
 
