@@ -190,9 +190,9 @@ if cust_df is not None and not cust_df.empty:
     if 'customer_id' in cust_df.columns:
         cust_rename_map['customer_id'] = 'Customer ID'
     if 'customer_name' in cust_df.columns:
-        cust_rename_map['customer_name'] = 'Name'
+        cust_rename_map['customer_name'] = 'name'
     if 'customer_number' in cust_df.columns:
-        cust_rename_map['customer_number'] = 'Phone'
+        cust_rename_map['customer_number'] = 'phone'
 
     if cust_rename_map:
         cust_df = cust_df.rename(columns=cust_rename_map)
@@ -345,5 +345,6 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
