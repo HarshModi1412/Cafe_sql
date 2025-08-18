@@ -139,18 +139,6 @@ def safe_transform_transactions(txns: pd.DataFrame) -> pd.DataFrame:
         txns["Discount"] = 0
 
     return txns
-# Normalize customer columns
-if cust_df is not None and not cust_df.empty:
-    cust_rename_map = {}
-    if 'customer_id' in cust_df.columns:
-        cust_rename_map['customer_id'] = 'Customer ID'
-    if 'customer_name' in cust_df.columns:
-        cust_rename_map['customer_name'] = 'Name'
-    if 'customer_number' in cust_df.columns:
-        cust_rename_map['customer_number'] = 'Phone'
-
-    if cust_rename_map:
-        cust_df = cust_df.rename(columns=cust_rename_map)
 
 # =========================================================
 # STREAMLIT SETTINGS
@@ -195,6 +183,19 @@ txns_df  = safe_transform_transactions(read_table(resolved_names["Transactions"]
 cust_df  = read_table(resolved_names["Customers"])
 prod_df  = read_table(resolved_names["Products"])
 promo_df = read_table(resolved_names["Promotions"])
+
+# Normalize customer columns
+if cust_df is not None and not cust_df.empty:
+    cust_rename_map = {}
+    if 'customer_id' in cust_df.columns:
+        cust_rename_map['customer_id'] = 'Customer ID'
+    if 'customer_name' in cust_df.columns:
+        cust_rename_map['customer_name'] = 'Name'
+    if 'customer_number' in cust_df.columns:
+        cust_rename_map['customer_number'] = 'Phone'
+
+    if cust_rename_map:
+        cust_df = cust_df.rename(columns=cust_rename_map)
 
 # Rename columns in prod_df
 if prod_df is not None and not prod_df.empty:
@@ -344,4 +345,5 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
