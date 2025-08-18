@@ -166,7 +166,12 @@ def map_customer_journey_and_affinity(transactions_df: pd.DataFrame, customer_id
 
 
 def generate_personal_offer(transactions_df: pd.DataFrame, cust_df=None, customer_id=None) -> str:
+    """
+    Generate a personalized offer for a customer based on RFM, journey, and affinity.
+    Handles missing data gracefully.
+    """
     try:
+        # --- Step 1: Calculate RFM and assign segments ---
         rfm = calculate_rfm(transactions_df)
         rfm = assign_segment_tags(rfm)
         targets = get_campaign_targets(rfm)
@@ -174,44 +179,52 @@ def generate_personal_offer(transactions_df: pd.DataFrame, cust_df=None, custome
         if targets.empty:
             return "No eligible customers for today's campaign."
 
+        # --- Step 2: Choose target customer ---
         top_cid = str(customer_id) if customer_id else str(targets.iloc[0]['Customer ID'])
 
+        # --- Step 3: Map customer journey & affinity ---
         journey = map_customer_journey_and_affinity(transactions_df, customer_id=top_cid)
 
-        # Next best category
+        # --- Step 4: Determine next best category ---
         trans = journey.get('journey_transitions', pd.DataFrame())
         if not trans.empty and 'To' in trans.columns:
-            next_cat_series = trans.groupby('To')['Count'].sum()
+            next_cat_series = trans[trans['To'].notna() & (trans['To'] != "NA")].groupby('To')['Count'].sum()
             next_cat = next_cat_series.idxmax() if not next_cat_series.empty else "your favorite category"
         else:
             next_cat = "your favorite category"
 
-        # Bundle
+        # --- Step 5: Determine top bundle (affinity pair) ---
         aff = journey.get('affinity_pairs', pd.DataFrame())
         if not aff.empty and {'Sub1', 'Sub2'}.issubset(aff.columns):
             top_bundle = aff.sort_values('Count', ascending=False).iloc[0]
-            bundle = f"{top_bundle['Sub1']} + {top_bundle['Sub2']}"
+            sub1 = top_bundle['Sub1'] if pd.notna(top_bundle['Sub1']) and top_bundle['Sub1'] != "NA" else "an item"
+            sub2 = top_bundle['Sub2'] if pd.notna(top_bundle['Sub2']) and top_bundle['Sub2'] != "NA" else "a matching item"
+            bundle = f"{sub1} + {sub2}"
         else:
             bundle = "a matching item"
 
-        # Customer info with fallback
-        name, phone = "Valued Customer", "N/A"
-        if cust_df is not None:
+        # --- Step 6: Fetch customer info ---
+        name, phone = "Valued Customer", "📱 N/A"
+        if cust_df is not None and not cust_df.empty:
             cust_cols = [col.lower() for col in cust_df.columns]
             if 'customer id' in cust_cols:
                 id_col = cust_df.columns[cust_cols.index('customer id')]
                 cust_df_str_ids = cust_df[id_col].astype(str)
                 if top_cid in cust_df_str_ids.values:
                     row = cust_df[cust_df_str_ids == top_cid].iloc[0]
-                    name = row.get('Customer Name', row.get('Name', name))
-                    phone = row.get('Mobile Number', row.get('Telephone', phone))
+                    name = row.get('name', row.get('Name', name))
+                    phone = row.get('phone', row.get('Phone', phone))
 
-        return (
-            f"📣 Hi **{name}** (📱 {phone})!\n\n"
+        # --- Step 7: Construct personalized message ---
+        message = (
+            f"📣 Hi **{name}** ({phone})!\n\n"
             f"You’re eligible for a special offer on **{next_cat}**, "
             f"plus discounts on a **bundle of {bundle}**.\n"
             "Don’t miss this personalized deal crafted just for you!"
         )
+
+        return message
+
     except Exception as e:
-        # Catch all errors and return a friendly message
+        # Catch all errors gracefully
         return f"⚠️ Could not generate offer due to an internal issue. Details: {str(e)}"
