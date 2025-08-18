@@ -174,7 +174,7 @@ if st.button("🔄 Refresh Data"):
 CANDIDATES = {
     "Transactions": ["transactions", "billing"],
     "Customers":    ["customers"],
-    "Products":     ["product"],
+    "Products":     ["products"],
     "Promotions":   ["promotions"],
 }
 resolved_names = {logical: resolve_table_name(candidates) for logical, candidates in CANDIDATES.items()}
@@ -345,6 +345,7 @@ with tabs[6]:
             "products": prod_df,
             "promotions": promo_df
         })
+
 
 
 
