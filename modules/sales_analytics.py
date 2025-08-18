@@ -235,11 +235,18 @@ def render_subcategory_trends(txns_df):
         df['Date'] = pd.to_datetime(df['Date'], errors='coerce')
         df = df.dropna(subset=['Date'])
 
+        # --- Ensure Invoice Total exists ---
+        if 'Invoice Total' not in df.columns:
+            if 'Unit Price' in df.columns and 'Quantity' in df.columns:
+                df['Invoice Total'] = df['Quantity'] * df['Unit Price']
+            else:
+                df['Invoice Total'] = 0  # fallback, avoids crashing
+
         # Extract month and day of week
         df['Month'] = df['Date'].dt.to_period('M').astype(str)
         df['DayOfWeek'] = df['Date'].dt.day_name()
 
-        # Optional: Filter to sales only if Transaction Type column exists
+        # Filter sales only if Transaction Type exists
         if 'Transaction Type' in df.columns:
             df['Transaction Type'] = df['Transaction Type'].astype(str).str.lower().str.strip()
             if df['Transaction Type'].str.contains('sale').any():
@@ -263,13 +270,13 @@ def render_subcategory_trends(txns_df):
         if 'Production Cost' in sub_df.columns:
             agg_dict['Production Cost'] = 'sum'
         else:
-            sub_df['Production Cost'] = np.nan
+            sub_df['Production Cost'] = 0
             agg_dict['Production Cost'] = 'sum'
 
         trend_df = sub_df.groupby('Month').agg(agg_dict).reset_index()
 
-        # Calculate gross profit and margin safely
-        trend_df['Gross Profit'] = trend_df['Invoice Total'] - trend_df['Production Cost'].fillna(0)
+        # Safe profit calculations
+        trend_df['Gross Profit'] = trend_df['Invoice Total'] - trend_df['Production Cost']
         trend_df['Profit Margin (%)'] = np.where(
             trend_df['Invoice Total'] > 0,
             (trend_df['Gross Profit'] / trend_df['Invoice Total']) * 100,
@@ -315,7 +322,7 @@ def render_subcategory_trends(txns_df):
 
         if not trend_df.empty and len(trend_df) > 1:
             latest = trend_df.iloc[-1]
-            growth_rate = (trend_df['Invoice Total'].pct_change().iloc[-1] * 100) if len(trend_df) > 1 else 0
+            growth_rate = (trend_df['Invoice Total'].pct_change().iloc[-1] * 100)
             avg_profit = trend_df['Gross Profit'].mean()
             best_day = dow_df.loc[dow_df['Invoice Total'].idxmax(), 'DayOfWeek']
             worst_day = dow_df.loc[dow_df['Invoice Total'].idxmin(), 'DayOfWeek']
@@ -417,6 +424,7 @@ Consider optimizing the discount ladder to focus on sweet spots that convert.
             st.success(f"💰 High margin (**{margin:.1f}%**) — opportunity to scale up with more volume or promotions.")
 
     st.markdown("---")
+
 
 
 
